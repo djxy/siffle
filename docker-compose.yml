@@ -1,0 +1,18 @@
+services:
+  siffleux-server:
+    image: siffle-test
+    command: server
+    networks:
+      - siffleux-net
+  siffleux-client:
+    image: siffle-test
+    command: udp-latency --server siffleux-server --mps 10000 -t 20
+    environment:
+      - RUST_LOG=INFO
+    depends_on:
+      - siffleux-server
+    networks:
+      - siffleux-net
+networks:
+  siffleux-net:
+    driver: bridge
