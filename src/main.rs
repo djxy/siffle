@@ -1,5 +1,6 @@
 mod cli;
 
+use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, ToSocketAddrs, UdpSocket};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -7,14 +8,35 @@ use std::time::{Duration, Instant};
 use clap::Parser;
 use log::{error, info};
 
-use crate::cli::{Cli, Commands, UdpLatencyArgs};
+use crate::cli::{Cli, Commands, UdpArgs};
 
 fn start_server(bind_addr: SocketAddr) {
     thread::spawn(move || {
         let listener = TcpListener::bind(bind_addr).expect("Failed to bind TCP server socket.");
         info!("TCP server listening on {}", bind_addr);
 
-        while let Ok((stream, src)) = listener.accept() {}
+        let mut buffer = [0u8; 1024];
+
+        while let Ok((mut stream, src)) = listener.accept() {
+            info!("New TCP connection from {}", src);
+            stream.set_nodelay(true).unwrap();
+
+            loop {
+                match stream.read(&mut buffer) {
+                    Ok(length) => {
+                        if let Err(_) = stream.write(&buffer[..length]) {
+                            break;
+                        }
+                    }
+                    Err(_) => {
+                        break;
+                    }
+                }
+            }
+
+            drop(stream);
+            info!("TCP connection from {} disconnected.", src);
+        }
     });
 
     let socket = UdpSocket::bind(bind_addr).expect("Failed to bind UDP server socket.");
@@ -28,7 +50,7 @@ fn start_server(bind_addr: SocketAddr) {
     }
 }
 
-fn start_udp_latency_test(server_addr: SocketAddr, args: UdpLatencyArgs) {
+fn start_udp_latency_test(server_addr: SocketAddr, args: UdpArgs) {
     let total_messages = args.mps * args.duration;
 
     info!("Server:                  {}", server_addr);
@@ -175,7 +197,7 @@ fn main() {
         Commands::Server(args) => {
             start_server(SocketAddr::new(args.ip, args.port));
         }
-        Commands::UdpLatency(args) => {
+        Commands::Udp(args) => {
             start_udp_latency_test(
                 format!("{}:{}", args.server, args.port)
                     .to_socket_addrs()
