@@ -1,0 +1,8 @@
+.github/
+
+assets/
+target/
+
+Dockerfile
+readme.md
+LICENSE

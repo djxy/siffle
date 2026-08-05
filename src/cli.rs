@@ -17,7 +17,9 @@ pub enum Commands {
     /// Start the TCP and UDP echo servers
     Server(ServerAgrs),
     /// Start testing latency over UDP
-    Udp(UdpArgs),
+    Udp(ClientArgs),
+    /// Start testing latency over TCP
+    Tcp(ClientArgs),
 }
 
 #[derive(Args)]
@@ -32,12 +34,12 @@ pub struct ServerAgrs {
 }
 
 #[derive(Args)]
-pub struct UdpArgs {
-    /// IP address or the hostname of the UDP echo server
+pub struct ClientArgs {
+    /// IP address or the hostname of the UDP/TCP echo server
     #[arg(long, short = 's')]
     pub server: String,
 
-    /// Port of the UDP echo server
+    /// Port of the UDP/TCP echo server
     #[arg(long, short = 'p', default_value_t = 3001)]
     pub port: u16,
 

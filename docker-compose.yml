@@ -8,7 +8,7 @@ services:
       - siffle-net
   siffle-client:
     image: siffle
-    command: udp -s siffle-server --mps 1000 -t 20
+    command: tcp -s siffle-server --mps 1000 -t 20
     environment:
       - RUST_LOG=INFO
     depends_on:
