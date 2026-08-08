@@ -6,7 +6,7 @@
 
 </div>
 
-Siffle is a Rust-based CLI tool measuring network latency over UDP and TCP. It runs a server that echoes all UDP datagrams and TCP streams back to the source, allowing the client to measure round-trip latency.
+Siffle is a CLI tool measuring network latency over UDP and TCP. It runs a server that echoes all UDP datagrams and TCP streams back to the source, allowing the client to measure round-trip latency.
 
 While originally developed to test [Siffleux](https://github.com/djxy/siffleux) TCP/UDP ingresses and egresses, it can measure latency across any network.
 
