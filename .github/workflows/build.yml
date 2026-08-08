@@ -8,12 +8,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - id: version
-        run: |
-          echo "VERSION=$(yq '.package.version' Cargo.toml)" >> $GITHUB_OUTPUT
-          echo "TAG=v$(yq '.package.version' Cargo.toml)" >> $GITHUB_OUTPUT
+        run: echo "VERSION=$(yq '.package.version' Cargo.toml)" >> $GITHUB_OUTPUT
     outputs:
       version: ${{ steps.version.outputs.version }}
-      tag: ${{ steps.version.outputs.tag }}
   binary-build:
     name: Binary build ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
@@ -42,11 +39,14 @@ jobs:
         env:
           RUSTFLAGS: ${{ matrix.rustflags }}
         run: cargo build --release --target ${{ matrix.target }} --bin siffle
+      - name: Rename binary
+        run: |
+          mv target/${{ matrix.target }}/release/siffle siffle-${{ matrix.name }}
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: siffle-${{ matrix.name }}
-          path: target/${{ matrix.target }}/release/siffle
+          path: siffle-${{ matrix.name }}
   docker-build:
     name: Docker build ${{ matrix.arch }}
     runs-on: ${{ matrix.os }}
@@ -127,9 +127,7 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=sha,format=short
             type=raw,value=latest
-            type=raw,value=${{ needs.get-cargo-version.outputs.tag }}
             type=raw,value=${{ needs.get-cargo-version.outputs.version }}
       - name: Create manifest list and push
         uses: docker/build-push-action@v7
@@ -155,16 +153,16 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag ${{ needs.get-cargo-version.outputs.tag }}
-          git push origin ${{ needs.get-cargo-version.outputs.tag }} --force
+          git tag ${{ needs.get-cargo-version.outputs.version }}
+          git push origin ${{ needs.get-cargo-version.outputs.version }} --force
       - name: Download built binary artifacts
         uses: actions/download-artifact@v8
         with:
           path: release-artifacts
           pattern: siffle-*
       - name: Create GitHub Release and attach binaries
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ needs.get-cargo-version.outputs.tag }}
+          tag_name: ${{ needs.get-cargo-version.outputs.version }}
           files: release-artifacts/**/*
           generate_release_notes: false
