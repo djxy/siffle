@@ -2,15 +2,11 @@ services:
   siffle-server:
     image: siffle
     command: server
-    environment:
-      - RUST_LOG=INFO
     networks:
       - siffle-net
   siffle-client:
     image: siffle
-    command: tcp -s siffle-server --mps 1000 -t 20
-    environment:
-      - RUST_LOG=INFO
+    command: tcp -s siffle-server --mps 100 -t 20
     depends_on:
       - siffle-server
     networks:

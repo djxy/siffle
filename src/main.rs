@@ -6,6 +6,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use clap::Parser;
+use env_logger::{Builder, Env};
 use log::{error, info};
 
 use crate::cli::{Cli, ClientArgs, Commands};
@@ -153,46 +154,10 @@ fn start_udp_latency_test(server_addr: SocketAddr, args: ClientArgs) {
 
     drop(socket);
 
-    let ids_received_at = receiver_handle.join().expect("Receiver thread panicked");
-    let mut messages_loss = 0;
-    let mut rtt: Vec<Duration> = Vec::new();
-
-    for id in 0..ids_sent_at.len() {
-        let sent_at = ids_sent_at.get(id).unwrap();
-
-        if let Some(received_at) = ids_received_at[id] {
-            rtt.push(received_at.duration_since(*sent_at));
-        } else {
-            messages_loss += 1;
-        }
-    }
-
-    info!("Messages sent:     {}", ids_sent_at.len());
-    info!("Messages received: {}", rtt.len());
-    info!("Messages loss:     {}", messages_loss);
-
-    if rtt.is_empty() {
-        error!("No responses received. Target may be unreachable or dropping all packets.");
-        return;
-    }
-
-    rtt.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-
-    let calc_percentile = |p: f64| -> &Duration {
-        let idx = ((rtt.len() as f64 * p).floor() as usize).min(rtt.len() - 1);
-        &rtt[idx]
-    };
-
-    info!("--- Latency Results ---");
-    info!("Min:    {:?}", rtt.first().unwrap());
-    info!("p25.00: {:?}", calc_percentile(0.25));
-    info!("p50.00: {:?}", calc_percentile(0.50));
-    info!("p75.00: {:?}", calc_percentile(0.75));
-    info!("p90.00: {:?}", calc_percentile(0.90));
-    info!("p99.00: {:?}", calc_percentile(0.99));
-    info!("p99.90: {:?}", calc_percentile(0.999));
-    info!("p99.99: {:?}", calc_percentile(0.9999));
-    info!("Max:    {:?}", rtt.last().unwrap());
+    print_results(
+        receiver_handle.join().expect("Read thread panicked"),
+        ids_sent_at,
+    );
 }
 
 fn start_tcp_latency_test(server_addr: SocketAddr, args: ClientArgs) {
@@ -263,15 +228,16 @@ fn start_tcp_latency_test(server_addr: SocketAddr, args: ClientArgs) {
     let mut ids_sent_at: Vec<Instant> = Vec::with_capacity(total_messages);
     let mut id_counter: u32 = 0;
     let mut payload = [0u8; 4];
+    let mps = args.mps as u128;
     let test_duration = Duration::from_secs(args.duration as u64);
     let sleep_duration = Duration::from_millis(1);
     let start = Instant::now();
 
     loop {
-        let progress = start.elapsed().as_micros() as f64 / test_duration.as_micros() as f64;
-        let expected_messages_sent =
-            total_messages.min((total_messages as f64 * progress) as usize);
-        let messages_to_send = expected_messages_sent - ids_sent_at.len();
+        let expected_messages_sent = ((start.elapsed().as_nanos() * mps) / 1_000_000_000) as usize;
+        let messages_to_send = expected_messages_sent
+            .min(total_messages)
+            .saturating_sub(ids_sent_at.len());
 
         for _ in 0..messages_to_send {
             payload.copy_from_slice(&id_counter.to_be_bytes());
@@ -293,7 +259,13 @@ fn start_tcp_latency_test(server_addr: SocketAddr, args: ClientArgs) {
 
     thread::sleep(Duration::from_secs(1));
 
-    let ids_received_at = read_handle.join().expect("Read thread panicked");
+    print_results(
+        read_handle.join().expect("Read thread panicked"),
+        ids_sent_at,
+    );
+}
+
+fn print_results(ids_received_at: Vec<Option<Instant>>, ids_sent_at: Vec<Instant>) {
     let mut messages_loss = 0;
     let mut rtt: Vec<Duration> = Vec::new();
 
@@ -336,7 +308,8 @@ fn start_tcp_latency_test(server_addr: SocketAddr, args: ClientArgs) {
 }
 
 fn main() {
-    env_logger::init();
+    Builder::from_env(Env::default().default_filter_or("info")).init();
+
     let cli = Cli::parse();
 
     match cli.command {
