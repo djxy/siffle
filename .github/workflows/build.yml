@@ -130,17 +130,11 @@ jobs:
             type=raw,value=latest
             type=raw,value=${{ needs.get-cargo-version.outputs.version }}
       - name: Create manifest list and push
-        uses: docker/build-push-action@v7
-        with:
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-contexts: |
-            digests=/tmp/digests
-          outputs: |
-            type=image,name=ghcr.io/${{ github.repository }},push=true
-      - name: Inspect image
         run: |
-          docker buildx imagetools inspect ghcr.io/${{ github.repository }}:latest
+          cd /tmp/digests
+          DIGESTS=$(ls | xargs -I {} echo "ghcr.io/${{ github.repository }}@sha256:{}")
+          TAGS=$(echo "${{ steps.meta.outputs.tags }}" | xargs -I {} echo "-t {}")
+          docker buildx imagetools create $TAGS $DIGESTS
   release:
     name: Tag & Create GitHub Release
     needs: [binary-build, docker-merge, get-cargo-version]
