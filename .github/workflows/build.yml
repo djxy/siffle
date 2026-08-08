@@ -9,19 +9,10 @@ jobs:
       tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@v7
-      - id: version
+      - name: Extract version with yq
         run: |
-          VERSION=$(python3 -c '
-          import re
-          with open("Cargo.toml") as f:
-              for line in f:
-                  m = re.match(r"^version\s*=\s*\"([^\"]+)\"", line.strip())
-                  if m:
-                      print(m.group(1))
-                      break
-          ')
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "tag=v${VERSION}" >> $GITHUB_OUTPUT
+          echo "VERSION=$(yq '.package.version' Cargo.toml)" >> $GITHUB_OUTPUT
+          echo "TAG=v$(yq '.package.version' Cargo.toml)" >> $GITHUB_OUTPUT
   binary-build:
     name: Binary build ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
