@@ -2,17 +2,18 @@ name: Build
 on:
   workflow_dispatch:
 jobs:
-  get-version:
+  get-cargo-version:
+    name: Get Cargo version
     runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.version.outputs.version }}
-      tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@v7
-      - name: Extract version with yq
+      - id: version
         run: |
           echo "VERSION=$(yq '.package.version' Cargo.toml)" >> $GITHUB_OUTPUT
           echo "TAG=v$(yq '.package.version' Cargo.toml)" >> $GITHUB_OUTPUT
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
   binary-build:
     name: Binary build ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
@@ -155,7 +156,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag ${{ needs.get-version.outputs.tag }}
-          git push origin ${{ needs.get-version.outputs.tag }}
+          git push origin ${{ needs.get-version.outputs.tag }} --force
       - name: Download built binary artifacts
         uses: actions/download-artifact@v8
         with:
