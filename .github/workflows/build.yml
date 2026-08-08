@@ -101,7 +101,7 @@ jobs:
           retention-days: 1
   docker-merge:
     name: Merge multi-arch manifest
-    needs: [docker-build, get-version]
+    needs: [docker-build, get-cargo-version]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -129,8 +129,8 @@ jobs:
           tags: |
             type=sha,format=short
             type=raw,value=latest
-            type=raw,value=${{ needs.get-version.outputs.tag }}
-            type=raw,value=${{ needs.get-version.outputs.version }}
+            type=raw,value=${{ needs.get-cargo-version.outputs.tag }}
+            type=raw,value=${{ needs.get-cargo-version.outputs.version }}
       - name: Create manifest list and push
         uses: docker/build-push-action@v7
         with:
@@ -145,7 +145,7 @@ jobs:
           docker buildx imagetools inspect ghcr.io/${{ github.repository }}:latest
   release:
     name: Tag & Create GitHub Release
-    needs: [binary-build, docker-merge, get-version]
+    needs: [binary-build, docker-merge, get-cargo-version]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -155,8 +155,8 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag ${{ needs.get-version.outputs.tag }}
-          git push origin ${{ needs.get-version.outputs.tag }} --force
+          git tag ${{ needs.get-cargo-version.outputs.tag }}
+          git push origin ${{ needs.get-cargo-version.outputs.tag }} --force
       - name: Download built binary artifacts
         uses: actions/download-artifact@v8
         with:
@@ -165,6 +165,6 @@ jobs:
       - name: Create GitHub Release and attach binaries
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.get-version.outputs.tag }}
+          tag_name: ${{ needs.get-cargo-version.outputs.tag }}
           files: release-artifacts/**/*
           generate_release_notes: false
