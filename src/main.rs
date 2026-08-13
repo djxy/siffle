@@ -7,9 +7,58 @@ use std::time::{Duration, Instant};
 
 use clap::Parser;
 use env_logger::{Builder, Env};
-use log::{error, info};
+use log::info;
+use serde::{Serialize, Serializer};
 
 use crate::cli::{Cli, ClientArgs, Commands};
+
+fn format_duration<S>(duration: &Duration, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_i64(duration.as_micros() as i64)
+}
+
+#[derive(Serialize, Debug)]
+struct Latency {
+    #[serde(serialize_with = "format_duration")]
+    min: Duration,
+    #[serde(serialize_with = "format_duration")]
+    p25: Duration,
+    #[serde(serialize_with = "format_duration")]
+    p50: Duration,
+    #[serde(serialize_with = "format_duration")]
+    p75: Duration,
+    #[serde(serialize_with = "format_duration")]
+    p90: Duration,
+    #[serde(serialize_with = "format_duration")]
+    p99: Duration,
+    #[serde(serialize_with = "format_duration")]
+    p99_9: Duration,
+    #[serde(serialize_with = "format_duration")]
+    p99_99: Duration,
+    #[serde(serialize_with = "format_duration")]
+    max: Duration,
+}
+
+/// The details between 2 instants
+#[derive(Serialize, Debug)]
+struct Interval {
+    messages_sent: usize,
+    messages_received: usize,
+    latency: Latency,
+}
+
+#[derive(Serialize, Debug)]
+struct Results {
+    /// Details about all the test
+    total: Interval,
+
+    /// Details about each second of the test.
+    /// intervals[0] -> 0s to 1s
+    /// intervals[1] -> 1s to 2s
+    intervals: Vec<Interval>,
+}
 
 fn start_server(bind_addr: SocketAddr) {
     thread::spawn(move || {
@@ -58,12 +107,6 @@ fn start_server(bind_addr: SocketAddr) {
 fn start_udp_latency_test(server_addr: SocketAddr, args: ClientArgs) {
     let total_messages = args.mps * args.duration;
 
-    info!("Protocol:                UDP");
-    info!("Server:                  {}", server_addr);
-    info!("Duration:                {}s", args.duration);
-    info!("Messages per second:     {}", args.mps);
-    info!("Total messages expected: {}", total_messages);
-
     let socket = UdpSocket::bind("0.0.0.0:0").expect("Failed to bind UDP client socket.");
 
     socket
@@ -73,28 +116,6 @@ fn start_udp_latency_test(server_addr: SocketAddr, args: ClientArgs) {
     socket
         .set_read_timeout(Some(Duration::from_millis(500)))
         .unwrap();
-
-    let mut payload = [0u8; 4];
-
-    payload.copy_from_slice(&u32::MAX.to_be_bytes());
-
-    let warmup_duration = Duration::from_millis(400);
-    let warmup_start = Instant::now();
-
-    info!("Starting warmup");
-
-    loop {
-        let _ = socket.send(&payload);
-        let _ = socket.recv(&mut payload);
-
-        if warmup_start.elapsed() >= warmup_duration {
-            break;
-        }
-    }
-
-    info!("Warmup duration: {:?}", warmup_start.elapsed());
-
-    thread::sleep(Duration::from_millis(100));
 
     let receiver_socket = socket.try_clone().expect("Failed to clone socket");
 
@@ -155,49 +176,21 @@ fn start_udp_latency_test(server_addr: SocketAddr, args: ClientArgs) {
     drop(socket);
 
     print_results(
-        receiver_handle.join().expect("Read thread panicked"),
         ids_sent_at,
+        receiver_handle.join().expect("Read thread panicked"),
+        args,
     );
 }
 
 fn start_tcp_latency_test(server_addr: SocketAddr, args: ClientArgs) {
     let total_messages = args.mps * args.duration;
-
-    info!("Protocol:                TCP");
-    info!("Server:                  {}", server_addr);
-    info!("Duration:                {}s", args.duration);
-    info!("Messages per second:     {}", args.mps);
-    info!("Total messages expected: {}", total_messages);
-
-    let mut stream = TcpStream::connect(server_addr).expect("Failed to bind TCP client socket.");
+    let stream = TcpStream::connect(server_addr).expect("Failed to bind TCP client socket.");
 
     stream.set_nodelay(true).unwrap();
 
     stream
         .set_read_timeout(Some(Duration::from_millis(500)))
         .unwrap();
-
-    let mut payload = [0u8; 4];
-
-    payload.copy_from_slice(&u32::MAX.to_be_bytes());
-
-    let warmup_duration = Duration::from_millis(400);
-    let warmup_start = Instant::now();
-
-    info!("Starting warmup");
-
-    loop {
-        let _ = stream.write(&payload);
-        let _ = stream.read_exact(&mut payload);
-
-        if warmup_start.elapsed() >= warmup_duration {
-            break;
-        }
-    }
-
-    info!("Warmup duration: {:?}", warmup_start.elapsed());
-
-    thread::sleep(Duration::from_millis(100));
 
     let mut read_stream = stream.try_clone().unwrap();
     let mut write_stream = stream;
@@ -260,51 +253,90 @@ fn start_tcp_latency_test(server_addr: SocketAddr, args: ClientArgs) {
     thread::sleep(Duration::from_secs(1));
 
     print_results(
-        read_handle.join().expect("Read thread panicked"),
         ids_sent_at,
+        read_handle.join().expect("Read thread panicked"),
+        args,
     );
 }
 
-fn print_results(ids_received_at: Vec<Option<Instant>>, ids_sent_at: Vec<Instant>) {
-    let mut messages_loss = 0;
-    let mut rtt: Vec<Duration> = Vec::new();
+fn print_results(
+    messages_sent_at: Vec<Instant>,
+    messages_received_at: Vec<Option<Instant>>,
+    args: ClientArgs,
+) {
+    let mut total_messages_received = 0;
+    let mut total_messages_sent = 0;
+    let mut total_rtts: Vec<Duration> = Vec::new();
+    let mut intervals: Vec<Interval> = Vec::with_capacity(args.duration);
 
-    for id in 0..ids_sent_at.len() {
-        let sent_at = ids_sent_at.get(id).unwrap();
+    for second in 0..args.duration {
+        let mut messages_sent = 0;
+        let mut messages_received = 0;
+        let mut rtts = Vec::with_capacity(args.mps);
 
-        if let Some(received_at) = ids_received_at[id] {
-            rtt.push(received_at.duration_since(*sent_at));
-        } else {
-            messages_loss += 1;
+        for i in 0..args.mps {
+            let id = (second * args.mps) + i;
+
+            if let Some(sent_at) = messages_sent_at.get(id) {
+                messages_sent += 1;
+
+                if let Some(received_at) = messages_received_at[id] {
+                    messages_received += 1;
+                    rtts.push(received_at.duration_since(*sent_at));
+                }
+            }
         }
+
+        rtts.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+        intervals.push(Interval {
+            messages_sent,
+            messages_received,
+            latency: Latency {
+                min: *rtts.first().unwrap(),
+                p25: get_rtt_percentile(0.25, &rtts),
+                p50: get_rtt_percentile(0.50, &rtts),
+                p75: get_rtt_percentile(0.75, &rtts),
+                p90: get_rtt_percentile(0.90, &rtts),
+                p99: get_rtt_percentile(0.99, &rtts),
+                p99_9: get_rtt_percentile(0.999, &rtts),
+                p99_99: get_rtt_percentile(0.9999, &rtts),
+                max: *rtts.last().unwrap(),
+            },
+        });
+
+        total_messages_sent += messages_sent;
+        total_messages_received += messages_received;
+        total_rtts.append(&mut rtts);
     }
 
-    info!("Messages sent:     {}", ids_sent_at.len());
-    info!("Messages received: {}", rtt.len());
-    info!("Messages loss:     {}", messages_loss);
+    total_rtts.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
-    if rtt.is_empty() {
-        error!("No responses received. Target may be unreachable or dropping all packets.");
-        return;
-    }
-
-    rtt.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-
-    let calc_percentile = |p: f64| -> &Duration {
-        let idx = ((rtt.len() as f64 * p).floor() as usize).min(rtt.len() - 1);
-        &rtt[idx]
+    let results = Results {
+        total: Interval {
+            messages_received: total_messages_received,
+            messages_sent: total_messages_sent,
+            latency: Latency {
+                min: *total_rtts.first().unwrap(),
+                p25: get_rtt_percentile(0.25, &total_rtts),
+                p50: get_rtt_percentile(0.50, &total_rtts),
+                p75: get_rtt_percentile(0.75, &total_rtts),
+                p90: get_rtt_percentile(0.90, &total_rtts),
+                p99: get_rtt_percentile(0.99, &total_rtts),
+                p99_9: get_rtt_percentile(0.999, &total_rtts),
+                p99_99: get_rtt_percentile(0.9999, &total_rtts),
+                max: *total_rtts.last().unwrap(),
+            },
+        },
+        intervals,
     };
 
-    info!("--- Latency Results ---");
-    info!("Min:    {:?}", rtt.first().unwrap());
-    info!("p25.00: {:?}", calc_percentile(0.25));
-    info!("p50.00: {:?}", calc_percentile(0.50));
-    info!("p75.00: {:?}", calc_percentile(0.75));
-    info!("p90.00: {:?}", calc_percentile(0.90));
-    info!("p99.00: {:?}", calc_percentile(0.99));
-    info!("p99.90: {:?}", calc_percentile(0.999));
-    info!("p99.99: {:?}", calc_percentile(0.9999));
-    info!("Max:    {:?}", rtt.last().unwrap());
+    println!("{}", serde_json::to_string_pretty(&results).unwrap());
+}
+
+fn get_rtt_percentile(p: f64, rtts: &Vec<Duration>) -> Duration {
+    let idx = ((rtts.len() as f64 * p).floor() as usize).min(rtts.len() - 1);
+    rtts[idx]
 }
 
 fn main() {
